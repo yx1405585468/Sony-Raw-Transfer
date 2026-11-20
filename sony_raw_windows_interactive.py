@@ -43,8 +43,33 @@ def discover(interface):
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(('', 1900))
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
-                        socket.inet_aton('239.255.255.250') + socket.inet_aton(interface))
+        local_ips = [interface]
+        if interface == '0.0.0.0':
+            try:
+                addresses = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_DGRAM)
+            except socket.gaierror:
+                addresses = []
+            local_ips = sorted({
+                address[0] for _, _, _, _, address in addresses
+                if address[0] != '0.0.0.0' and not address[0].startswith('127.')
+            })
+
+        group = socket.inet_aton('239.255.255.250')
+        joined = []
+        for local_ip in local_ips:
+            try:
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
+                                group + socket.inet_aton(local_ip))
+            except OSError:
+                if interface != '0.0.0.0':
+                    raise
+            else:
+                joined.append(local_ip)
+        if not joined:
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
+                            group + socket.inet_aton('0.0.0.0'))
+            joined.append('0.0.0.0')
+        print(f'SSDP IPv4: {", ".join(joined)}', flush=True)
         print('正在等待相机，请在相机上选择「发送至电脑」。', flush=True)
         while True:
             data, address = sock.recvfrom(65535)
@@ -269,7 +294,8 @@ def interactive(args):
             print(menu)
             print('连接状态：' + ('已建立，执行时将验证是否仍可用' if camera else '未连接'))
             try:
-                choice = input('请输入功能编号：').strip()
+                # choice = input('请输入功能编号：').strip()
+                choice = '1'
                 if choice == '0':
                     break
                 if choice not in ('1', '2', '3', '4', '5', '6'):
@@ -319,7 +345,7 @@ if __name__ == '__main__':
     parser._positionals.title = '位置参数'
     parser._optionals.title = '可选参数'
     parser.add_argument('--ip', help='相机 IP 地址；省略时通过 SSDP 自动发现')
-    parser.add_argument('--interface', default='0.0.0.0', help='接收组播所用的电脑 Wi-Fi IPv4 地址')
+    parser.add_argument('--interface', default='0.0.0.0', help='接收组播所用的电脑 Wi-Fi IPv4 地址，默认自动识别')
     parser.add_argument('--guid', default=DEFAULT_GUID, help='相机已登记的接收端 GUID')
     parser.add_argument('--output', type=Path, default=Path(__file__).parent / 'SonyPhotos',
                         help='照片保存目录，默认为脚本旁的 SonyPhotos')
